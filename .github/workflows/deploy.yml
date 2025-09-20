@@ -1,0 +1,87 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Run final tests
+      run: |
+        python -m pytest test_app.py -v
+        
+    - name: Build Docker image
+      run: |
+        docker build -t mlops-sentiment-analysis:${{ github.sha }} .
+        docker tag mlops-sentiment-analysis:${{ github.sha }} mlops-sentiment-analysis:latest
+        
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Push Docker image
+      run: |
+        docker push mlops-sentiment-analysis:${{ github.sha }}
+        docker push mlops-sentiment-analysis:latest
+        
+    - name: Trigger Jenkins Job
+      run: |
+        echo "Triggering Jenkins job for deployment..."
+        curl -X POST \
+          -H "Authorization: Bearer ${{ secrets.JENKINS_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          "${{ secrets.JENKINS_URL }}/job/mlops-deploy/build" \
+          --data '{"parameter": {"name": "IMAGE_TAG", "value": "${{ github.sha }}"}}' || echo "Jenkins job trigger failed"
+        
+    - name: Send deployment notification
+      uses: dawidd6/action-send-mail@v3
+      if: always()
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: "MLOps Deployment Status - ${{ job.status }}"
+        to: ${{ secrets.ADMIN_EMAIL }}
+        from: ${{ secrets.EMAIL_USERNAME }}
+        body: |
+          Deployment Status: ${{ job.status }}
+          Branch: ${{ github.ref }}
+          Commit: ${{ github.sha }}
+          Author: ${{ github.actor }}
+          Timestamp: ${{ github.event.head_commit.timestamp }}
+          
+          {% if job.status == 'success' %}
+          ✅ Deployment completed successfully!
+          Docker image: mlops-sentiment-analysis:${{ github.sha }}
+          {% else %}
+          ❌ Deployment failed!
+          Please check the logs for details.
+          {% endif %}
+          
+    - name: Create deployment summary
+      run: |
+        echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Docker Image**: mlops-sentiment-analysis:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp**: $(date)" >> $GITHUB_STEP_SUMMARY
