@@ -2,7 +2,8 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_IMAGE = 'mlops-sentiment-analysis'
+        DOCKER_HUB_USER = credentials('docker-hub-username')
+        DOCKER_IMAGE = "${DOCKER_HUB_USER}/mlops-sentiment-analysis"
         DOCKER_TAG = "${env.BUILD_NUMBER}"
         DOCKER_REGISTRY = 'docker.io'
         DOCKER_USERNAME = credentials('docker-hub-username')
@@ -25,6 +26,8 @@ pipeline {
         stage('Environment Setup') {
             steps {
                 script {
+                    // Check Python installation
+                    sh 'python --version || echo "Python is not installed!"'
                     echo "Building Docker image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
                     echo "Branch: ${env.BRANCH_NAME}"
                     echo "Build Number: ${env.BUILD_NUMBER}"
@@ -81,6 +84,7 @@ pipeline {
             steps {
                 script {
                     try {
+                        // Build and tag Docker image with both build number and latest
                         sh '''
                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
                         docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
