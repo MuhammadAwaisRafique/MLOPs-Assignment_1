@@ -236,14 +236,60 @@ class TestModelPerformance(unittest.TestCase):
         self.assertLess(prediction_time, 5, "Prediction should complete within 5 seconds")
         self.assertEqual(response.status_code, 200)
 
+class TestEdgeCases(unittest.TestCase):
+    """Extra edge case and error handling tests for the Flask app."""
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    def test_predict_whitespace_review(self):
+        """Test prediction endpoint with whitespace-only review."""
+        response = self.app.post('/predict',
+                                data=json.dumps({'review': '   \t  '}),
+                                content_type='application/json')
+        self.assertEqual(response.status_code, 200, "Whitespace review should return 200 OK")
+        data = json.loads(response.data)
+        self.assertIn('prediction', data, "Response should contain 'prediction'")
+
+    def test_predict_non_utf8_input(self):
+        """Test prediction endpoint with non-UTF-8 input."""
+        # Send bytes that are not valid UTF-8
+        bad_bytes = b'{"review": "\xff\xfe\xfd"}'
+        response = self.app.post('/predict',
+                                data=bad_bytes,
+                                content_type='application/json')
+        self.assertIn(response.status_code, [400, 500], "Non-UTF-8 input should return 400 or 500")
+
+    def test_health_endpoint_model_missing(self):
+        """Test /health endpoint when model/vectorizer are missing."""
+        with patch('app.model', None), patch('app.tfidf', None):
+            response = self.app.get('/health')
+            self.assertEqual(response.status_code, 200, "Health endpoint should still return 200")
+            data = json.loads(response.data)
+            self.assertFalse(data.get('model_loaded', True), "model_loaded should be False if model is missing")
+            self.assertFalse(data.get('vectorizer_loaded', True), "vectorizer_loaded should be False if vectorizer is missing")
+
+    def test_404_handler(self):
+        """Test that a non-existent route returns 404."""
+        response = self.app.get('/nonexistent')
+        self.assertEqual(response.status_code, 404, "Non-existent route should return 404")
+        self.assertIn(b'404', response.data, "404 page should mention '404'")
+
+    def test_requirements_file_content(self):
+        """Test that requirements.txt contains key dependencies."""
+        with open('requirements.txt', 'r', encoding='utf-8') as f:
+            content = f.read()
+        self.assertIn('flask', content.lower(), "requirements.txt should mention flask")
+        self.assertIn('scikit-learn', content.lower(), "requirements.txt should mention scikit-learn")
+        self.assertIn('pandas', content.lower(), "requirements.txt should mention pandas")
+
 if __name__ == '__main__':
     # Create a test suite
     suite = unittest.TestLoader().loadTestsFromTestCase(TestIMDBSentimentAnalysis)
     suite.addTest(unittest.TestLoader().loadTestsFromTestCase(TestModelPerformance))
-    
+    suite.addTest(unittest.TestLoader().loadTestsFromTestCase(TestEdgeCases))
     # Run the tests
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    
     # Exit with appropriate code
     sys.exit(0 if result.wasSuccessful() else 1)
